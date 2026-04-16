@@ -1,0 +1,9 @@
+General Ledger
+Account: Business Checking
+Date  Transaction Type  Description  Split  Amount  Balance
+01/02/2025  Deposit  Client payment INV-1001  Services  5,000.00  5,000.00
+01/05/2025  Expense  Office Depot #12345  Supplies & Materials  (250.00)  4,750.00
+01/06/2025  Transfer  Online transfer to savings  Transfer  (1,000.00)  3,750.00
+01/07/2025  Expense  IRS tax payment EFT  Taxes Paid  (300.00)  3,450.00
+01/07/2025  Expense  IRS tax payment EFT  Taxes Paid  (300.00)  3,150.00
+

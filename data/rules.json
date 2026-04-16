@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "contains_bank_fee",
+      "match_type": "contains",
+      "pattern": "bank fee",
+      "category": "Bank Charges",
+      "non_pnl": false,
+      "field": "normalized_description",
+      "confidence": 0.8,
+      "priority": 20
+    },
+    {
+      "id": "contains_irs_tax",
+      "match_type": "contains",
+      "pattern": "irs",
+      "category": "Taxes Paid",
+      "non_pnl": false,
+      "field": "normalized_description",
+      "confidence": 0.8,
+      "priority": 20
+    },
+    {
+      "id": "contains_owner_draw",
+      "match_type": "contains",
+      "pattern": "owner draw",
+      "category": "NON_PNL",
+      "non_pnl": true,
+      "field": "normalized_description",
+      "confidence": 0.95,
+      "priority": 80
+    }
+  ]
+}
+

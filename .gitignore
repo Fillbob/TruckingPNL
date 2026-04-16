@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+data/sample_outputs/
+

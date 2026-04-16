@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "learned_exact_8d035b8b96",
+      "match_type": "exact",
+      "pattern": "interest payment interest paid",
+      "category": "Interest Paid",
+      "non_pnl": false,
+      "field": "normalized_description",
+      "confidence": 1.0,
+      "priority": 100
+    },
+    {
+      "id": "learned_exact_7cecd8f28c",
+      "match_type": "exact",
+      "pattern": "interest payment pnc- 9333",
+      "category": "Interest Paid",
+      "non_pnl": false,
+      "field": "normalized_description",
+      "confidence": 1.0,
+      "priority": 100
+    },
+    {
+      "id": "learned_exact_460b821d43",
+      "match_type": "exact",
+      "pattern": "zel from eiffel tomika cost of labor- cos",
+      "category": "Cost of Labor- COS",
+      "non_pnl": false,
+      "field": "normalized_description",
+      "confidence": 1.0,
+      "priority": 100
+    },
+    {
+      "id": "learned_exact_46c226ff0c",
+      "match_type": "exact",
+      "pattern": "zel from james e brizard cost of labor- cos",
+      "category": "Cost of Labor- COS",
+      "non_pnl": false,
+      "field": "normalized_description",
+      "confidence": 1.0,
+      "priority": 100
+    },
+    {
+      "id": "learned_exact_57b7cfa9f3",
+      "match_type": "exact",
+      "pattern": "zelle to injaz trucking llc cost of labor- cos",
+      "category": "Cost of Labor- COS",
+      "non_pnl": false,
+      "field": "normalized_description",
+      "confidence": 1.0,
+      "priority": 100
+    }
+  ]
+}

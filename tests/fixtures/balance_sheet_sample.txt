@@ -1,0 +1,11 @@
+Balance Sheet
+As of December 31, 2025
+
+Assets
+Total Cash  3,150.00
+Total Assets  3,150.00
+
+Liabilities and Equity
+Net Income  4,425.00
+Total Liabilities and Equity  3,150.00
+

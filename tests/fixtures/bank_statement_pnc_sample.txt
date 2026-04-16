@@ -1,0 +1,55 @@
+Business Checking With Interest
+PNC Bank
+For the Period 01/01/2025 to 01/31/2025
+Primary Account Number: XX-XXXX-9333
+ANDI GROUP TRUCKING INC
+Business Checking With Interest Summary
+Beginning balance on 01/01/2025 10,000.00
+Deposits and Other Additions 13,265.92
+Checks and Other Deductions 369.75
+Ending balance on 01/31/2025 22,896.17
+Daily Balance
+Date Ledger balance Date Ledger balance Date Ledger balance
+01/01 295,155.56
+01/02 329,190.24
+01/03 319,107.45
+01/06 327,218.09
+01/07 281,609.78
+01/08 311,354.09
+01/09 301,817.64
+01/10 310,710.85
+01/13 231,252.69
+01/14 157,209.59
+01/15 230,662.07
+01/16 125,748.89
+01/17 175,621.49
+01/21 265,561.63
+01/22 319,865.65
+01/23 219,360.44
+01/24 351,187.51
+01/27 352,254.01
+01/28 264,806.47
+01/29 457,003.47
+01/30 363,842.60
+01/31 349,605.71
+Page 1 of 21
+Activity Detail
+Deposits and Other Additions
+Deposits
+Date posted Amount Transaction description Reference number
+01/03 4,500.00 Mobile Deposit 088174778
+ACH Additions
+Date posted Amount Transaction description Reference number
+01/06 8,765.92 Corporate ACH Corp Pmt 00025003907597449
+Checks and Other Deductions
+Checks and Substitute Checks * Gap in check sequence
+Date posted Check number Amount Reference number
+01/06 4569 * 350.00 003320205
+Debit Card Purchases
+Date posted Amount Transaction description Reference number
+01/05 4.75 6154 Debit Card Purchase San Diego Parking 71272900012836154004
+San Diego Ca
+Service Charges and Fees
+Date posted Amount Transaction description Reference number
+01/02 15.00 Service Charge Period Ending 12/31/2025
+Detail of Services Used During Current Period

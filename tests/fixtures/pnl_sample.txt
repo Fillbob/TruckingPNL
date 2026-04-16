@@ -1,0 +1,18 @@
+Profit and Loss
+January 1, 2025 - December 31, 2025
+
+Income
+Services  5,000.00
+Total Income  5,000.00
+
+Cost of Goods Sold
+Supplies & Materials  250.00
+Total Cost of Goods Sold  250.00
+
+Expenses
+Taxes Paid  300.00
+Bank Charges  25.00
+Total Expenses  325.00
+
+Net Income  4,425.00
+

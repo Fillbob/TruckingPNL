@@ -1,14 +1,14 @@
 """Typed schemas for the financial validation MVP."""
 
-from financial_validator_mvp.models.document_metadata import DocumentMetadata, DocumentType
-from financial_validator_mvp.models.schemas import (
+from .document_metadata import DocumentMetadata, DocumentType
+from .schemas import (
     BalanceSheetSnapshot,
     PnLCategoryTotal,
     Transaction,
     ValidationLine,
     ValidationOutput,
 )
-from financial_validator_mvp.models.validation_pack import PackStatus, ValidationPack
+from .validation_pack import PackStatus, ValidationPack
 
 __all__ = [
     "BalanceSheetSnapshot",

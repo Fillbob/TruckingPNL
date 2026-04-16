@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import io
 from pathlib import Path
 import sys
+import zipfile
 
 import pandas as pd
 import streamlit as st
@@ -861,6 +863,10 @@ def _render_exports() -> None:
     _render_help_box(
         "Choose the output folder, run export checks, then generate final CSV/XLSX and PDF reports."
     )
+    st.caption(
+        "If this app is running on Streamlit Cloud, files are written to the cloud container path, not your local PC. "
+        "Use the download buttons below to save files locally."
+    )
     output_dir_text = st.text_input("Output folder", value=str(DEFAULT_OUTPUT_DIR))
     company_name = st.text_input("Company Name for PDF Reports", value="Company")
     tolerance_value = st.number_input(
@@ -949,6 +955,20 @@ def _render_exports() -> None:
             _render_table(reconciliation_display)
             st.warning(exported_message)
 
+        st.session_state["latest_export_files"] = [
+            export_paths["raw_csv"],
+            export_paths["raw_xlsx"],
+            export_paths["monthly_csv"],
+            export_paths["monthly_xlsx"],
+            export_paths["period_total_csv"],
+            export_paths["period_total_xlsx"],
+            export_paths["period_summary_csv"],
+            export_paths["period_summary_xlsx"],
+            checks_path,
+            balance_checks_path,
+            learned_dest,
+        ]
+
     if st.button("Generate PDF Reports", key="btn_generate_pdf_reports"):
         output_dir = Path(output_dir_text)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -983,6 +1003,49 @@ def _render_exports() -> None:
             f"- {pnl_pdf}\n"
             f"- {balance_pdf}"
         )
+        prior_files = st.session_state.get("latest_export_files", [])
+        st.session_state["latest_export_files"] = [*prior_files, pnl_pdf, balance_pdf]
+
+    _render_export_downloads()
+
+
+def _render_export_downloads() -> None:
+    latest_files = st.session_state.get("latest_export_files", [])
+    if not latest_files:
+        return
+
+    file_paths = [Path(path) for path in latest_files]
+    existing_files = [path for path in file_paths if path.exists() and path.is_file()]
+    if not existing_files:
+        return
+
+    st.markdown("**Download Export Files**")
+    zip_bytes = _build_zip_bytes(existing_files)
+    st.download_button(
+        "Download All Exports (.zip)",
+        data=zip_bytes,
+        file_name="trucking_pnl_exports.zip",
+        mime="application/zip",
+        key="btn_download_exports_zip",
+    )
+
+    for path in existing_files:
+        st.download_button(
+            f"Download {path.name}",
+            data=path.read_bytes(),
+            file_name=path.name,
+            mime="application/octet-stream",
+            key=f"btn_download_{path.name}",
+        )
+
+
+def _build_zip_bytes(file_paths: list[Path]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in file_paths:
+            archive.writestr(path.name, path.read_bytes())
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 def _write_local_csv_xlsx_outputs(output_dir: Path, transactions, pnl):
@@ -1477,8 +1540,12 @@ def _signed_number_style(value) -> str:
 
 def _render_table(frame: pd.DataFrame, *, use_container_width: bool = True, hide_index: bool = True) -> None:
     display_frame = _format_display_frame(frame)
-    styled = display_frame.style.applymap(_signed_number_style)
-    if hide_index:
+    styled = display_frame.style
+    if hasattr(styled, "applymap"):
+        styled = styled.applymap(_signed_number_style)
+    elif hasattr(styled, "map"):
+        styled = styled.map(_signed_number_style)
+    if hide_index and hasattr(styled, "hide"):
         styled = styled.hide(axis="index")
     st.dataframe(styled, use_container_width=use_container_width)
 

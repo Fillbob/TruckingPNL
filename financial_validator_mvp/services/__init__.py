@@ -1,27 +1,15 @@
-"""Bridge package to expose top-level `services` as `financial_validator_mvp.services`."""
+"""Namespace shim mapping `financial_validator_mvp.services` to root `services/`."""
 
 from __future__ import annotations
 
-import importlib
-import pkgutil
 import sys
+from pathlib import Path
 
-_REAL_PACKAGE_NAME = "services"
-_REAL_PACKAGE = importlib.import_module(_REAL_PACKAGE_NAME)
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REAL_DIR = _REPO_ROOT / "services"
 
-# Mirror package search path for submodule loading.
-__path__ = list(getattr(_REAL_PACKAGE, "__path__", []))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-# Eagerly alias discovered submodules.
-for _module_info in pkgutil.iter_modules(__path__):
-    _submodule_name = _module_info.name
-    _full_real_name = f"{_REAL_PACKAGE_NAME}.{_submodule_name}"
-    try:
-        _module = importlib.import_module(_full_real_name)
-    except Exception:
-        continue
-    sys.modules[f"{__name__}.{_submodule_name}"] = _module
-
-# Re-export names from the real package.
-for _name in getattr(_REAL_PACKAGE, "__all__", []):
-    globals()[_name] = getattr(_REAL_PACKAGE, _name)
+# Let Python resolve submodules from the real package directory.
+__path__ = [str(_REAL_DIR)]

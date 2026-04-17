@@ -14,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from financial_validator_mvp.parsers.bank_statement_parser_pnc import parse_pnc_statement_pdf_with_checks_data
+from financial_validator_mvp.parsers.document_classifier import classify_document
+from financial_validator_mvp.parsers.pnl_parser import parse_pnl_pdf
 from financial_validator_mvp.services.classifier import classify_transactions, detect_rule_conflicts, parse_rule_dicts
 from financial_validator_mvp.services.normalization import normalize_transactions
 from financial_validator_mvp.services.output_checks import (
@@ -85,6 +87,9 @@ SESSION_RESET_KEYS = [
     "pending_impacted_transactions_table",
     "step3_failed_check_name",
     "step3_failed_transactions_editor",
+    "reference_pnl_totals",
+    "reference_pnl_file_names",
+    "unsupported_import_files",
 ]
 
 
@@ -109,11 +114,14 @@ def main() -> None:
             _reset_app_session()
             st.rerun()
         uploaded_files = st.file_uploader(
-            "Step 1: Upload bank statement PDFs",
+            "Step 1: Upload bank statement and/or P&L PDFs",
             type=["pdf"],
             accept_multiple_files=True,
             key="bank_pdfs",
-            help="Upload one or more monthly bank statement PDFs. Duplicates are skipped automatically.",
+            help=(
+                "Upload one or more monthly bank statement PDFs. "
+                "QuickBooks-style Profit & Loss PDFs are also accepted as reference imports."
+            ),
         )
         analyze_clicked = st.button(
             "Parse Statements",
@@ -125,12 +133,12 @@ def main() -> None:
 
     if analyze_clicked:
         if not uploaded_files:
-            st.error("Upload at least one bank statement PDF.")
+            st.error("Upload at least one bank statement or P&L PDF.")
             return
         _analyze_bank_files(uploaded_files)
 
     if "bank_transactions" not in st.session_state:
-        st.info("Upload bank statement PDFs and click 'Parse Statements'.")
+        st.info("Upload bank statement and/or P&L PDFs and click 'Parse Statements'.")
         return
 
     if st.session_state.get("duplicate_map"):
@@ -157,19 +165,52 @@ def _analyze_bank_files(uploaded_files) -> None:
     transactions = []
     balance_summaries = []
     daily_balances_by_file: dict[str, list] = {}
+    reference_pnl_totals = []
+    reference_pnl_file_names: list[str] = []
+    unsupported_files: list[str] = []
+    bank_files_parsed = 0
     for file_name, payload in canonical_files.items():
-        parsed_transactions, summary, daily_points = parse_pnc_statement_pdf_with_checks_data(
-            payload,
-            source_file=file_name,
-        )
-        transactions.extend(parsed_transactions)
-        if summary is not None:
-            balance_summaries.append(summary)
-        if daily_points:
-            daily_balances_by_file[file_name] = daily_points
+        metadata = classify_document(payload, file_name=file_name)
+        if metadata.document_type == "pnl":
+            parsed_totals = parse_pnl_pdf(payload, source_file=file_name)
+            if parsed_totals:
+                reference_pnl_totals.extend(parsed_totals)
+                reference_pnl_file_names.append(file_name)
+            else:
+                unsupported_files.append(f"{file_name} (P&L parsed with 0 totals)")
+            continue
+
+        if metadata.document_type in {"bank_statement", "unknown"}:
+            parsed_transactions, summary, daily_points = parse_pnc_statement_pdf_with_checks_data(
+                payload,
+                source_file=file_name,
+            )
+            if parsed_transactions:
+                bank_files_parsed += 1
+            transactions.extend(parsed_transactions)
+            if summary is not None:
+                balance_summaries.append(summary)
+            if daily_points:
+                daily_balances_by_file[file_name] = daily_points
+            if not parsed_transactions and metadata.document_type != "bank_statement":
+                unsupported_files.append(f"{file_name} (unsupported PDF format)")
+            continue
+
+        unsupported_files.append(f"{file_name} ({metadata.document_type})")
 
     if not transactions:
-        st.error("No transactions were extracted. Confirm the bank PDF format.")
+        st.session_state["reference_pnl_totals"] = reference_pnl_totals
+        st.session_state["reference_pnl_file_names"] = reference_pnl_file_names
+        st.session_state["unsupported_import_files"] = unsupported_files
+        if reference_pnl_totals:
+            st.warning(
+                f"Parsed {len(reference_pnl_totals)} reference P&L row(s) from {len(reference_pnl_file_names)} file(s), "
+                "but no bank transactions were found. Upload at least one bank statement PDF to continue."
+            )
+        else:
+            st.error("No bank transactions were extracted. Confirm the bank PDF format.")
+        if unsupported_files:
+            st.warning("Some files were not usable:\n- " + "\n- ".join(unsupported_files))
         return
 
     normalize_transactions(transactions)
@@ -179,11 +220,23 @@ def _analyze_bank_files(uploaded_files) -> None:
     st.session_state["bank_balance_summaries"] = balance_summaries
     st.session_state["bank_daily_balances_by_file"] = daily_balances_by_file
     st.session_state["duplicate_map"] = duplicate_map
+    st.session_state["reference_pnl_totals"] = reference_pnl_totals
+    st.session_state["reference_pnl_file_names"] = reference_pnl_file_names
+    st.session_state["unsupported_import_files"] = unsupported_files
     st.session_state["pending_review_assignments"] = {}
     st.session_state["workflow_step"] = 2
     st.session_state["review_completed"] = False
     st.session_state["reports_completed"] = False
-    st.success(f"Parsed {len(transactions)} transactions from {len(canonical_files)} unique statement file(s).")
+    status_bits = [
+        f"Parsed {len(transactions)} bank transaction(s) from {bank_files_parsed} bank file(s).",
+    ]
+    if reference_pnl_totals:
+        status_bits.append(
+            f"Parsed {len(reference_pnl_totals)} reference P&L total row(s) from {len(reference_pnl_file_names)} P&L file(s)."
+        )
+    st.success(" ".join(status_bits))
+    if unsupported_files:
+        st.warning("Some files were not usable:\n- " + "\n- ".join(unsupported_files))
 
 
 def _classify(transactions) -> None:
@@ -220,6 +273,7 @@ def _render_import_step() -> None:
     if "bank_transactions" in st.session_state:
         st.success("Statement parsed. Review the imported transactions below, then continue.")
         _render_raw_transactions()
+        _render_reference_pnl_totals()
         if st.button("Continue To Step 2: Review Categories", type="primary", key="btn_continue_step2"):
             st.session_state["workflow_step"] = 2
             st.rerun()
@@ -840,6 +894,7 @@ def _render_pnl_outputs() -> None:
 
     st.markdown("**Monthly Detail**")
     _render_table(pnl.monthly_detail)
+    _render_reference_pnl_totals(show_comparison=True, generated_pnl_detail=pnl.yearly_detail)
 
     if st.session_state.get("bank_balance_summaries"):
         st.markdown("**Parsed Bank Balance Summary (for monthly validation)**")
@@ -1046,6 +1101,42 @@ def _build_zip_bytes(file_paths: list[Path]) -> bytes:
             archive.writestr(path.name, path.read_bytes())
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def _render_reference_pnl_totals(
+    *,
+    show_comparison: bool = False,
+    generated_pnl_detail: pd.DataFrame | None = None,
+) -> None:
+    reference_totals = st.session_state.get("reference_pnl_totals", [])
+    if not reference_totals:
+        return
+
+    rows = [item.as_dict() for item in reference_totals]
+    ref_df = pd.DataFrame(rows)
+    st.markdown("**Imported Reference P&L Totals (from uploaded P&L PDFs)**")
+    _render_table(ref_df)
+
+    if not show_comparison or generated_pnl_detail is None or generated_pnl_detail.empty:
+        return
+
+    ref_rollup = (
+        ref_df.assign(category_key=ref_df["category_name"].astype(str).str.strip().str.lower())
+        .groupby("category_key", as_index=False)["amount"]
+        .sum()
+        .rename(columns={"amount": "reference_amount"})
+    )
+    gen_rollup = (
+        generated_pnl_detail.assign(category_key=generated_pnl_detail["category"].astype(str).str.strip().str.lower())
+        .groupby("category_key", as_index=False)["amount"]
+        .sum()
+        .rename(columns={"amount": "generated_amount"})
+    )
+    comparison = gen_rollup.merge(ref_rollup, on="category_key", how="outer").fillna(0.0)
+    comparison["difference"] = comparison["generated_amount"] - comparison["reference_amount"]
+    comparison = comparison.sort_values(by="category_key").reset_index(drop=True)
+    st.markdown("**Generated vs Reference P&L Category Comparison**")
+    _render_table(comparison)
 
 
 def _write_local_csv_xlsx_outputs(output_dir: Path, transactions, pnl):

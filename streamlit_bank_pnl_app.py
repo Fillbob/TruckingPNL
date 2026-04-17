@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import io
+from datetime import date
 from pathlib import Path
 import sys
 import zipfile
@@ -89,6 +90,8 @@ SESSION_RESET_KEYS = [
     "step3_failed_transactions_editor",
     "reference_pnl_totals",
     "reference_pnl_file_names",
+    "reference_pnl_documents",
+    "reference_pnl_selected_file",
     "unsupported_import_files",
 ]
 
@@ -167,6 +170,7 @@ def _analyze_bank_files(uploaded_files) -> None:
     daily_balances_by_file: dict[str, list] = {}
     reference_pnl_totals = []
     reference_pnl_file_names: list[str] = []
+    reference_pnl_documents: list[dict] = []
     unsupported_files: list[str] = []
     bank_files_parsed = 0
     for file_name, payload in canonical_files.items():
@@ -176,6 +180,14 @@ def _analyze_bank_files(uploaded_files) -> None:
             if parsed_totals:
                 reference_pnl_totals.extend(parsed_totals)
                 reference_pnl_file_names.append(file_name)
+                reference_pnl_documents.append(
+                    {
+                        "file_name": file_name,
+                        "period_start": metadata.period_start.isoformat() if metadata.period_start else None,
+                        "period_end": metadata.period_end.isoformat() if metadata.period_end else None,
+                        "totals": [item.as_dict() for item in parsed_totals],
+                    }
+                )
             else:
                 unsupported_files.append(f"{file_name} (P&L parsed with 0 totals)")
             continue
@@ -201,6 +213,7 @@ def _analyze_bank_files(uploaded_files) -> None:
     if not transactions:
         st.session_state["reference_pnl_totals"] = reference_pnl_totals
         st.session_state["reference_pnl_file_names"] = reference_pnl_file_names
+        st.session_state["reference_pnl_documents"] = reference_pnl_documents
         st.session_state["unsupported_import_files"] = unsupported_files
         if reference_pnl_totals:
             st.warning(
@@ -222,6 +235,7 @@ def _analyze_bank_files(uploaded_files) -> None:
     st.session_state["duplicate_map"] = duplicate_map
     st.session_state["reference_pnl_totals"] = reference_pnl_totals
     st.session_state["reference_pnl_file_names"] = reference_pnl_file_names
+    st.session_state["reference_pnl_documents"] = reference_pnl_documents
     st.session_state["unsupported_import_files"] = unsupported_files
     st.session_state["pending_review_assignments"] = {}
     st.session_state["workflow_step"] = 2
@@ -1108,13 +1122,48 @@ def _render_reference_pnl_totals(
     show_comparison: bool = False,
     generated_pnl_detail: pd.DataFrame | None = None,
 ) -> None:
-    reference_totals = st.session_state.get("reference_pnl_totals", [])
-    if not reference_totals:
+    reference_documents = st.session_state.get("reference_pnl_documents", [])
+    if not reference_documents:
+        reference_totals = st.session_state.get("reference_pnl_totals", [])
+        if not reference_totals:
+            return
+        reference_documents = [
+            {
+                "file_name": ", ".join(st.session_state.get("reference_pnl_file_names", [])) or "reference_pnl",
+                "period_start": None,
+                "period_end": None,
+                "totals": [item.as_dict() if hasattr(item, "as_dict") else item for item in reference_totals],
+            }
+        ]
+
+    summary_rows = []
+    for document in reference_documents:
+        summary_rows.append(
+            {
+                "file_name": document.get("file_name"),
+                "period_start": document.get("period_start"),
+                "period_end": document.get("period_end"),
+                "category_rows": len(document.get("totals", [])),
+            }
+        )
+    st.markdown("**Imported Reference P&L Documents**")
+    _render_table(pd.DataFrame(summary_rows))
+
+    selected_file = _default_reference_pnl_file(reference_documents)
+    selected_file = st.selectbox(
+        "Reference P&L file for comparison",
+        options=[item["file_name"] for item in reference_documents],
+        index=[item["file_name"] for item in reference_documents].index(selected_file),
+        key="reference_pnl_selected_file",
+    )
+    selected_doc = next(item for item in reference_documents if item["file_name"] == selected_file)
+    selected_totals = selected_doc.get("totals", [])
+    if not selected_totals:
         return
 
-    rows = [item.as_dict() for item in reference_totals]
+    rows = selected_totals
     ref_df = pd.DataFrame(rows)
-    st.markdown("**Imported Reference P&L Totals (from uploaded P&L PDFs)**")
+    st.markdown(f"**Reference P&L Totals: {selected_file}**")
     _render_table(ref_df)
 
     if not show_comparison or generated_pnl_detail is None or generated_pnl_detail.empty:
@@ -1137,6 +1186,56 @@ def _render_reference_pnl_totals(
     comparison = comparison.sort_values(by="category_key").reset_index(drop=True)
     st.markdown("**Generated vs Reference P&L Category Comparison**")
     _render_table(comparison)
+
+
+def _default_reference_pnl_file(reference_documents: list[dict]) -> str:
+    if not reference_documents:
+        return ""
+    transaction_period = _bank_transaction_period(st.session_state.get("bank_transactions", []))
+    if transaction_period == (None, None):
+        return reference_documents[0]["file_name"]
+    txn_start, txn_end = transaction_period
+    best_file = reference_documents[0]["file_name"]
+    best_overlap = -1
+    for document in reference_documents:
+        doc_start = _safe_iso_date(document.get("period_start"))
+        doc_end = _safe_iso_date(document.get("period_end"))
+        overlap = _period_overlap_days(txn_start, txn_end, doc_start, doc_end)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_file = document["file_name"]
+    return best_file
+
+
+def _bank_transaction_period(transactions) -> tuple[date | None, date | None]:
+    dates = sorted([txn.date for txn in transactions if getattr(txn, "date", None) is not None])
+    if not dates:
+        return None, None
+    return dates[0], dates[-1]
+
+
+def _safe_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _period_overlap_days(
+    left_start: date | None,
+    left_end: date | None,
+    right_start: date | None,
+    right_end: date | None,
+) -> int:
+    if not all([left_start, left_end, right_start, right_end]):
+        return 0
+    start = max(left_start, right_start)
+    end = min(left_end, right_end)
+    if start > end:
+        return 0
+    return (end - start).days + 1
 
 
 def _write_local_csv_xlsx_outputs(output_dir: Path, transactions, pnl):

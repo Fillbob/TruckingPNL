@@ -131,13 +131,12 @@ def main() -> None:
             ),
         )
         rules_backup_zip = st.file_uploader(
-            "Optional: Upload Rules Backup ZIP",
-            type=["zip"],
+            "Optional: Upload Rules Backup",
+            type=["zip", "csv", "json"],
             accept_multiple_files=False,
             key="rules_backup_zip",
             help=(
-                "Restore previously exported individual and bulk rules. "
-                "If this ZIP contains the split rules CSV files, they are imported automatically."
+                "Restore previously exported rules. Supports ZIP bundle backups plus direct rules CSV/JSON exports."
             ),
         )
         analyze_clicked = st.button(
@@ -280,28 +279,42 @@ def _classify(transactions) -> None:
     classify_transactions(transactions, rules)
 
 
-def _maybe_auto_import_rules_backup(uploaded_zip) -> None:
-    if uploaded_zip is None:
+def _maybe_auto_import_rules_backup(uploaded_file) -> None:
+    if uploaded_file is None:
         return
-    zip_bytes = uploaded_zip.getvalue()
-    if not zip_bytes:
+    payload_bytes = uploaded_file.getvalue()
+    if not payload_bytes:
         return
-    signature = hashlib.sha256(zip_bytes).hexdigest()
+    file_name = str(getattr(uploaded_file, "name", "rules_backup")).strip()
+    signature = hashlib.sha256(payload_bytes).hexdigest()
     previous_signature = st.session_state.get("rules_backup_imported_signature")
     if previous_signature == signature:
         return
 
     transactions = st.session_state.get("bank_transactions")
-    restored_rows, mode = _restore_rules_from_zip_bytes(zip_bytes, transactions=transactions)
+    try:
+        restored_rows, mode = _restore_rules_from_uploaded_file(
+            payload_bytes=payload_bytes,
+            file_name=file_name,
+            transactions=transactions,
+        )
+    except Exception as exc:
+        st.session_state["rules_backup_imported_signature"] = signature
+        st.error(f"Failed to import rules backup ({file_name}): {exc}")
+        return
     st.session_state["rules_backup_imported_signature"] = signature
     if mode == "csv":
-        st.success(f"Imported rules backup ZIP: {restored_rows} rule row(s) restored from CSV.")
+        st.success(f"Imported rules backup from CSV: {restored_rows} rule row(s) restored.")
     elif mode == "json":
-        st.success("Imported rules backup ZIP from learned_rules_bank.json.")
+        st.success(f"Imported rules backup from JSON: {restored_rows} rule row(s) restored.")
+    elif mode == "zip_csv":
+        st.success(f"Imported rules backup ZIP from split CSV rules: {restored_rows} row(s) restored.")
+    elif mode == "zip_json":
+        st.success(f"Imported rules backup ZIP from JSON rules: {restored_rows} row(s) restored.")
     else:
         st.warning(
-            "Rules backup ZIP uploaded, but no supported rule files were found. "
-            "Expected `rules_individual_exact.csv` and `rules_bulk_contains.csv` or `learned_rules_bank.json`."
+            "Rules backup uploaded, but no supported rule data was found. "
+            "Use ZIP with split rules CSVs, or a rules-table CSV/JSON export."
         )
 
 
@@ -344,12 +357,30 @@ def _render_review_step() -> None:
     _render_review_assistant()
 
     unresolved_count = _count_unresolved_transactions(st.session_state["bank_transactions"])
+    actionable_unresolved_count = _count_unresolved_transactions(
+        st.session_state["bank_transactions"],
+        actionable_only=True,
+    )
+    hidden_unresolved_count = max(0, unresolved_count - actionable_unresolved_count)
     pending_count = len(st.session_state.get("pending_review_assignments", {}))
+    if hidden_unresolved_count > 0:
+        st.info(
+            "Some unresolved rows are not shown in the review queue because they do not have a normalized description. "
+            f"Hidden unresolved rows: {hidden_unresolved_count}."
+        )
     if unresolved_count > 0 or pending_count > 0:
         st.warning(
             f"You cannot continue yet. Unresolved transactions: {unresolved_count}. "
             f"Pending unsaved assignments: {pending_count}."
         )
+        if st.button(
+            "Continue To Step 3 Anyway",
+            type="primary",
+            key="btn_force_continue_step3",
+        ):
+            st.session_state["review_completed"] = True
+            st.session_state["workflow_step"] = 3
+            st.rerun()
         return
 
     if st.button("Complete Step 2 And Continue To Reports", type="primary", key="btn_complete_step2"):
@@ -1215,6 +1246,85 @@ def _build_rules_frame(rule_rows: list[dict]) -> pd.DataFrame:
     return frame.fillna("")
 
 
+def _restore_rules_from_uploaded_file(payload_bytes: bytes, file_name: str, transactions=None) -> tuple[int, str]:
+    suffix = Path(file_name).suffix.lower().strip()
+    if suffix == ".zip":
+        rows, mode = _restore_rules_from_zip_bytes(payload_bytes, transactions=transactions)
+        if mode == "csv":
+            return rows, "zip_csv"
+        if mode == "json":
+            return rows, "zip_json"
+        return rows, mode
+    if suffix == ".csv":
+        return _restore_rules_from_csv_bytes(payload_bytes, transactions=transactions)
+    if suffix == ".json":
+        return _restore_rules_from_json_bytes(payload_bytes, transactions=transactions)
+
+    # Fallback: attempt ZIP first, then CSV/JSON.
+    rows, mode = _restore_rules_from_zip_bytes(payload_bytes, transactions=transactions)
+    if mode != "none":
+        return rows, mode
+    rows, mode = _restore_rules_from_csv_bytes(payload_bytes, transactions=transactions)
+    if mode != "none":
+        return rows, mode
+    return _restore_rules_from_json_bytes(payload_bytes, transactions=transactions)
+
+
+def _restore_rules_from_csv_bytes(payload_bytes: bytes, transactions=None) -> tuple[int, str]:
+    frame = pd.read_csv(io.BytesIO(payload_bytes))
+    if frame.empty:
+        return 0, "none"
+    rows = []
+    for row in frame.to_dict(orient="records"):
+        cleaned_row = {key: ("" if pd.isna(value) else value) for key, value in row.items()}
+        sanitized = _sanitize_rule_row(cleaned_row)
+        if sanitized:
+            rows.append(sanitized)
+    if not rows:
+        return 0, "none"
+
+    exact_rules = [row for row in rows if str(row.get("match_type", "")).strip().lower() == "exact"]
+    contains_rules = [row for row in rows if str(row.get("match_type", "")).strip().lower() == "contains"]
+    _save_split_rule_tables(
+        transactions=transactions,
+        exact_rules=exact_rules if exact_rules else None,
+        contains_rules=contains_rules if contains_rules else None,
+    )
+    return len(rows), "csv"
+
+
+def _restore_rules_from_json_bytes(payload_bytes: bytes, transactions=None) -> tuple[int, str]:
+    payload = json.loads(payload_bytes.decode("utf-8"))
+    if isinstance(payload, dict):
+        rules = payload.get("rules", [])
+    elif isinstance(payload, list):
+        rules = payload
+    else:
+        return 0, "none"
+    if not isinstance(rules, list):
+        return 0, "none"
+
+    sanitized_rows = []
+    for row in rules:
+        if not isinstance(row, dict):
+            continue
+        cleaned_row = {key: ("" if pd.isna(value) else value) for key, value in row.items()}
+        sanitized = _sanitize_rule_row(cleaned_row)
+        if sanitized:
+            sanitized_rows.append(sanitized)
+    if not sanitized_rows:
+        return 0, "none"
+
+    exact_rules = [row for row in sanitized_rows if str(row.get("match_type", "")).strip().lower() == "exact"]
+    contains_rules = [row for row in sanitized_rows if str(row.get("match_type", "")).strip().lower() == "contains"]
+    _save_split_rule_tables(
+        transactions=transactions,
+        exact_rules=exact_rules if exact_rules else None,
+        contains_rules=contains_rules if contains_rules else None,
+    )
+    return len(sanitized_rows), "json"
+
+
 def _restore_rules_from_zip_bytes(zip_bytes: bytes, transactions=None) -> tuple[int, str]:
     with zipfile.ZipFile(io.BytesIO(zip_bytes), mode="r") as archive:
         name_lookup = {name.lower(): name for name in archive.namelist()}
@@ -1557,12 +1667,26 @@ def _merge_exclude_text(manual_exclude_text: str, queue_excluded_values: list[st
     return "||".join(sorted(exclude_items))
 
 
-def _count_unresolved_transactions(transactions) -> int:
+def _count_unresolved_transactions(transactions, *, actionable_only: bool = False) -> int:
     unresolved = 0
     for txn in transactions:
-        if (txn.resolved_category or "").upper() == "UNCLASSIFIED":
-            unresolved += 1
+        if (txn.resolved_category or "").upper() != "UNCLASSIFIED":
+            continue
+        if actionable_only and not str(getattr(txn, "normalized_description", "") or "").strip():
+            continue
+        unresolved += 1
     return unresolved
+
+
+def _count_hidden_unresolved_transactions(transactions) -> int:
+    hidden = 0
+    for txn in transactions:
+        if (txn.resolved_category or "").upper() != "UNCLASSIFIED":
+            continue
+        if str(getattr(txn, "normalized_description", "") or "").strip():
+            continue
+        hidden += 1
+    return hidden
 
 
 def _has_full_year_of_data(transactions) -> bool:

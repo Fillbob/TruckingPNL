@@ -158,27 +158,27 @@ def _build_pnl_arithmetic_checks(
     checks.append(
         _money_check(
             "summary_gross_profit_formula",
-            expected=summary_map["Total Income"] - summary_map["Total COGS"],
+            expected=summary_map["Total Income"] + summary_map["Total COGS"],
             actual=summary_map["Gross Profit"],
-            details="Gross Profit = Total Income - Total COGS.",
+            details="Gross Profit = Total Income + Total COGS (signed section totals).",
             tolerance=tolerance,
         )
     )
     checks.append(
         _money_check(
             "summary_net_ordinary_income_formula",
-            expected=summary_map["Gross Profit"] - summary_map["Total Expenses"],
+            expected=summary_map["Gross Profit"] + summary_map["Total Expenses"],
             actual=summary_map["Net Ordinary Income"],
-            details="Net Ordinary Income = Gross Profit - Total Expenses.",
+            details="Net Ordinary Income = Gross Profit + Total Expenses (signed section totals).",
             tolerance=tolerance,
         )
     )
     checks.append(
         _money_check(
             "summary_net_income_formula",
-            expected=summary_map["Net Ordinary Income"] + summary_map["Total Other Income"] - summary_map["Total Other Expense"],
+            expected=summary_map["Net Ordinary Income"] + summary_map["Total Other Income"] + summary_map["Total Other Expense"],
             actual=summary_map["Net Income"],
-            details="Net Income = Net Ordinary Income + Total Other Income - Total Other Expense.",
+            details="Net Income = Net Ordinary Income + Total Other Income + Total Other Expense (signed section totals).",
             tolerance=tolerance,
         )
     )

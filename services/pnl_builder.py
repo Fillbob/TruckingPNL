@@ -172,12 +172,13 @@ def _build_yearly_summary(yearly_detail: pd.DataFrame) -> pd.DataFrame:
 
     total_income = by_section.get("Income", 0.0)
     total_cogs = by_section.get("COGS", 0.0)
-    gross_profit = total_income - total_cogs
+    # Section totals are signed, so profitability lines should add signed sections.
+    gross_profit = total_income + total_cogs
     total_expenses = by_section.get("Expenses", 0.0)
-    net_ordinary_income = gross_profit - total_expenses
+    net_ordinary_income = gross_profit + total_expenses
     other_income = by_section.get("Other Income", 0.0)
     other_expense = by_section.get("Other Expense", 0.0)
-    net_income = net_ordinary_income + other_income - other_expense
+    net_income = net_ordinary_income + other_income + other_expense
     unclassified = by_section.get("Unclassified", 0.0)
 
     rows = [

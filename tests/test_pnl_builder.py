@@ -62,7 +62,7 @@ class PnlBuilderTests(unittest.TestCase):
         self.assertEqual(lines["Total Income"], 10000.0)
         self.assertEqual(lines["Total COGS"], -3500.0)
         self.assertEqual(lines["Total Expenses"], -1200.0)
-        self.assertEqual(lines["Net Income"], 14700.0)
+        self.assertEqual(lines["Net Income"], 5300.0)
 
 
 if __name__ == "__main__":

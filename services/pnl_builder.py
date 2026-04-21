@@ -48,6 +48,7 @@ TRUCKING_PNL_SECTIONS: dict[PnlSection, list[str]] = {
         "Tolls",
         "Truck/Trailer Wash",
         "Uncategorized Expenses",
+        "Utilities",
     ],
     "Other Income": [
         "Other Income",

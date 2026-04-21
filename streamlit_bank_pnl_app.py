@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
+import json
 from datetime import date
 from pathlib import Path
 import sys
@@ -93,6 +95,8 @@ SESSION_RESET_KEYS = [
     "reference_pnl_documents",
     "reference_pnl_selected_file",
     "unsupported_import_files",
+    "rules_backup_zip",
+    "rules_backup_imported_signature",
 ]
 
 
@@ -126,6 +130,16 @@ def main() -> None:
                 "QuickBooks-style Profit & Loss PDFs are also accepted as reference imports."
             ),
         )
+        rules_backup_zip = st.file_uploader(
+            "Optional: Upload Rules Backup ZIP",
+            type=["zip"],
+            accept_multiple_files=False,
+            key="rules_backup_zip",
+            help=(
+                "Restore previously exported individual and bulk rules. "
+                "If this ZIP contains the split rules CSV files, they are imported automatically."
+            ),
+        )
         analyze_clicked = st.button(
             "Parse Statements",
             type="primary",
@@ -133,6 +147,8 @@ def main() -> None:
             key="btn_parse_statements",
             help="Extracts transactions, daily balances, and statement totals from uploaded PDFs.",
         )
+
+    _maybe_auto_import_rules_backup(rules_backup_zip)
 
     if analyze_clicked:
         if not uploaded_files:
@@ -262,6 +278,31 @@ def _classify(transactions) -> None:
     st.session_state["bank_classification_rules"] = rules
     st.session_state["bank_rule_conflicts"] = detect_rule_conflicts(rules)
     classify_transactions(transactions, rules)
+
+
+def _maybe_auto_import_rules_backup(uploaded_zip) -> None:
+    if uploaded_zip is None:
+        return
+    zip_bytes = uploaded_zip.getvalue()
+    if not zip_bytes:
+        return
+    signature = hashlib.sha256(zip_bytes).hexdigest()
+    previous_signature = st.session_state.get("rules_backup_imported_signature")
+    if previous_signature == signature:
+        return
+
+    transactions = st.session_state.get("bank_transactions")
+    restored_rows, mode = _restore_rules_from_zip_bytes(zip_bytes, transactions=transactions)
+    st.session_state["rules_backup_imported_signature"] = signature
+    if mode == "csv":
+        st.success(f"Imported rules backup ZIP: {restored_rows} rule row(s) restored from CSV.")
+    elif mode == "json":
+        st.success("Imported rules backup ZIP from learned_rules_bank.json.")
+    else:
+        st.warning(
+            "Rules backup ZIP uploaded, but no supported rule files were found. "
+            "Expected `rules_individual_exact.csv` and `rules_bulk_contains.csv` or `learned_rules_bank.json`."
+        )
 
 
 def _render_raw_transactions() -> None:
@@ -875,7 +916,7 @@ def _render_pending_preview_and_save(transactions) -> None:
         st.rerun()
 
 
-def _save_split_rule_tables(transactions, exact_rules, contains_rules) -> None:
+def _save_split_rule_tables(transactions=None, exact_rules=None, contains_rules=None) -> None:
     all_rules = load_rule_dicts(LEARNED_BANK_RULES_PATH)
     other_rules = [rule for rule in all_rules if str(rule.get("match_type", "")).lower() not in {"exact", "contains"}]
 
@@ -886,7 +927,8 @@ def _save_split_rule_tables(transactions, exact_rules, contains_rules) -> None:
 
     merged = exact_rules + contains_rules + other_rules
     save_rule_dicts(LEARNED_BANK_RULES_PATH, merged)
-    _classify(transactions)
+    if transactions is not None:
+        _classify(transactions)
 
 
 def _render_pnl_outputs() -> None:
@@ -989,6 +1031,7 @@ def _render_exports() -> None:
 
         learned_dest = output_dir / "learned_rules_bank.json"
         learned_dest.write_text(LEARNED_BANK_RULES_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+        individual_rules_csv, bulk_rules_csv, rules_manifest_path = _write_split_rule_csv_exports(output_dir)
 
         failed_checks = checks_df[checks_df["status"] == "FAIL"]
         st.markdown("**Export Reconciliation Checks**")
@@ -1007,7 +1050,10 @@ def _render_exports() -> None:
             f"- {export_paths['period_summary_xlsx']}\n"
             f"- {checks_path}\n"
             f"- {balance_checks_path}\n"
-            f"- {learned_dest}"
+            f"- {learned_dest}\n"
+            f"- {individual_rules_csv}\n"
+            f"- {bulk_rules_csv}\n"
+            f"- {rules_manifest_path}"
         )
         if not full_year:
             exported_message += "\n- labels use Period (not Yearly) because the span is under 12 months"
@@ -1036,6 +1082,9 @@ def _render_exports() -> None:
             checks_path,
             balance_checks_path,
             learned_dest,
+            individual_rules_csv,
+            bulk_rules_csv,
+            rules_manifest_path,
         ]
 
     if st.button("Generate PDF Reports", key="btn_generate_pdf_reports"):
@@ -1115,6 +1164,105 @@ def _build_zip_bytes(file_paths: list[Path]) -> bytes:
             archive.writestr(path.name, path.read_bytes())
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def _write_split_rule_csv_exports(output_dir: Path) -> tuple[Path, Path, Path]:
+    all_rules = load_rule_dicts(LEARNED_BANK_RULES_PATH)
+    individual_rules = [rule for rule in all_rules if str(rule.get("match_type", "")).lower() == "exact"]
+    bulk_rules = [rule for rule in all_rules if str(rule.get("match_type", "")).lower() == "contains"]
+
+    individual_frame = _build_rules_frame(individual_rules)
+    bulk_frame = _build_rules_frame(bulk_rules)
+
+    individual_path = output_dir / "rules_individual_exact.csv"
+    bulk_path = output_dir / "rules_bulk_contains.csv"
+    manifest_path = output_dir / "rules_manifest.json"
+
+    individual_frame.to_csv(individual_path, index=False)
+    bulk_frame.to_csv(bulk_path, index=False)
+    manifest = {
+        "backup_version": 1,
+        "rules_restore_priority": [
+            "rules_individual_exact.csv",
+            "rules_bulk_contains.csv",
+            "learned_rules_bank.json",
+        ],
+        "rules_csv_delineation": {
+            "rules_individual_exact.csv": "match_type=exact (individual rules)",
+            "rules_bulk_contains.csv": "match_type=contains (bulk rules)",
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return individual_path, bulk_path, manifest_path
+
+
+def _build_rules_frame(rule_rows: list[dict]) -> pd.DataFrame:
+    columns = [
+        "id",
+        "match_type",
+        "pattern",
+        "exclude_pattern",
+        "category",
+        "non_pnl",
+        "field",
+        "confidence",
+        "priority",
+        "origin",
+    ]
+    frame = pd.DataFrame(rule_rows, columns=columns)
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    return frame.fillna("")
+
+
+def _restore_rules_from_zip_bytes(zip_bytes: bytes, transactions=None) -> tuple[int, str]:
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), mode="r") as archive:
+        name_lookup = {name.lower(): name for name in archive.namelist()}
+        individual_name = _first_existing_name(
+            name_lookup,
+            ["rules_individual_exact.csv", "individual_rules.csv", "learned_rules_individual.csv"],
+        )
+        bulk_name = _first_existing_name(
+            name_lookup,
+            ["rules_bulk_contains.csv", "bulk_rules.csv", "learned_rules_bulk.csv"],
+        )
+        if individual_name and bulk_name:
+            exact_rules = _read_rules_csv(archive, individual_name)
+            contains_rules = _read_rules_csv(archive, bulk_name)
+            _save_split_rule_tables(transactions=transactions, exact_rules=exact_rules, contains_rules=contains_rules)
+            return len(exact_rules) + len(contains_rules), "csv"
+
+        json_name = _first_existing_name(name_lookup, ["learned_rules_bank.json", "learned_rules.json"])
+        if json_name:
+            payload = json.loads(archive.read(json_name))
+            rules = payload.get("rules", [])
+            if isinstance(rules, list):
+                save_rule_dicts(LEARNED_BANK_RULES_PATH, [rule for rule in rules if isinstance(rule, dict)])
+                if transactions is not None:
+                    _classify(transactions)
+                return len(rules), "json"
+    return 0, "none"
+
+
+def _first_existing_name(name_lookup: dict[str, str], candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        key = candidate.lower()
+        if key in name_lookup:
+            return name_lookup[key]
+    return None
+
+
+def _read_rules_csv(archive: zipfile.ZipFile, filename: str) -> list[dict]:
+    frame = pd.read_csv(io.BytesIO(archive.read(filename)))
+    if frame.empty:
+        return []
+    rows = []
+    for row in frame.to_dict(orient="records"):
+        cleaned_row = {key: ("" if pd.isna(value) else value) for key, value in row.items()}
+        sanitized = _sanitize_rule_row(cleaned_row)
+        if sanitized:
+            rows.append(sanitized)
+    return rows
 
 
 def _render_reference_pnl_totals(

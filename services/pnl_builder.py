@@ -157,11 +157,9 @@ def _month_key(txn_date: date | None) -> str:
 
 
 def _pnl_amount_for_section(amount: float, section: PnlSection) -> float:
-    # Income/Other Income stay positive when deposits; expense-style sections shown as positive spend.
-    if section in {"Income", "Other Income"}:
+    # Preserve signed activity for all categories so each category nets debits and credits.
+    if section in {"Income", "COGS", "Expenses", "Other Income", "Other Expense", "Unclassified"}:
         return amount
-    if section in {"COGS", "Expenses", "Other Expense", "Unclassified"}:
-        return abs(amount) if amount < 0 else amount
     return amount
 
 

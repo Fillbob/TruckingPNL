@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 
 from financial_validator_mvp.models.schemas import BankDailyBalancePoint, BankStatementBalanceSummary, Transaction
-from financial_validator_mvp.services.pnl_builder import PnlBuildResult, pnl_amount_for_category
+from financial_validator_mvp.services.pnl_builder import PnlBuildResult, infer_section_for_category, pnl_amount_for_category
 
 MONEY_TOLERANCE = 0.01
 
@@ -208,16 +208,23 @@ def _build_pnl_arithmetic_checks(
     )
 
     rebuilt_total = 0.0
+    yearly_total_ex_assets = 0.0
+    if not pnl.yearly_detail.empty:
+        yearly_total_ex_assets = float(
+            pnl.yearly_detail.loc[pnl.yearly_detail["section"] != "Assets", "amount"].sum()
+        )
     for txn in transactions:
         if (txn.resolved_category or "").upper() == "NON_PNL":
+            continue
+        if infer_section_for_category(txn.resolved_category or "UNCLASSIFIED") == "Assets":
             continue
         rebuilt_total += pnl_amount_for_category(txn.amount, txn.resolved_category or "UNCLASSIFIED")
     checks.append(
         _money_check(
-            "transaction_rollup_equals_yearly_total",
-            expected=yearly_total,
+            "transaction_rollup_equals_yearly_total_excluding_assets",
+            expected=yearly_total_ex_assets,
             actual=rebuilt_total,
-            details="Recomputed P&L total from transactions must equal yearly detail total.",
+            details="Recomputed P&L total from transactions must equal yearly detail total, excluding Assets.",
             tolerance=tolerance,
         )
     )

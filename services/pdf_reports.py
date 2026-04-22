@@ -111,7 +111,9 @@ def generate_balance_sheet_pdf(
 
     net_income = float(_summary_map(pnl.yearly_summary).get("Net Income", 0.0))
     assets_cash = _latest_total_cash(balance_summaries)
-    total_assets = assets_cash
+    pnl_assets = _asset_detail_rows(pnl)
+    pnl_assets_total = sum(amount for _, amount in pnl_assets)
+    total_assets = assets_cash + pnl_assets_total
     liabilities_total = 0.0
     opening_equity = total_assets - net_income
     total_equity = opening_equity + net_income
@@ -124,6 +126,10 @@ def generate_balance_sheet_pdf(
     canvas.drawString(90, y, "Cash and Bank")
     canvas.drawRightString(page_width - 72, y, _money(assets_cash))
     y -= 14
+    for asset_name, amount in pnl_assets:
+        canvas.drawString(90, y, asset_name)
+        canvas.drawRightString(page_width - 72, y, _money(amount))
+        y -= 14
     canvas.setFont("Helvetica-Bold", 10)
     canvas.drawString(90, y, "Total Assets")
     canvas.drawRightString(page_width - 72, y, _money(total_assets))
@@ -391,6 +397,17 @@ def _latest_total_cash(balance_summaries: list[BankStatementBalanceSummary]) -> 
             if item.period_end == latest_date
         )
     )
+
+
+def _asset_detail_rows(pnl: PnlBuildResult) -> list[tuple[str, float]]:
+    if pnl.yearly_detail.empty:
+        return []
+    asset_rows = pnl.yearly_detail[pnl.yearly_detail["section"] == "Assets"].copy()
+    if asset_rows.empty:
+        return []
+    asset_rows["category"] = asset_rows["category"].astype(str)
+    asset_rows["amount"] = pd.to_numeric(asset_rows["amount"], errors="coerce").fillna(0.0)
+    return [(str(row["category"]), float(row["amount"])) for _, row in asset_rows.sort_values("category").iterrows()]
 
 
 def _money(value: float) -> str:

@@ -97,6 +97,10 @@ SESSION_RESET_KEYS = [
     "unsupported_import_files",
     "rules_backup_zip",
     "rules_backup_imported_signature",
+    "manual_asset_entries",
+    "asset_name_input",
+    "asset_amount_input",
+    "manual_assets_editor",
 ]
 
 
@@ -454,6 +458,8 @@ def _render_step3_local_outputs_and_checks() -> bool:
                 export_paths["period_total_xlsx"],
                 export_paths["period_summary_csv"],
                 export_paths["period_summary_xlsx"],
+                export_paths["manual_assets_csv"],
+                export_paths["manual_assets_xlsx"],
             ]
         ),
         language="text",
@@ -753,11 +759,72 @@ def _render_review_assistant() -> None:
 
     _render_bulk_rule_manager(transactions)
     st.divider()
-    st.markdown('<div class="section-chip section-pending">2C. Pending Review</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-chip section-pending">2C. Assets Section</div>', unsafe_allow_html=True)
+    st.caption("Create asset line items one-by-one. These entries are included in P&L outputs and exports.")
+    _render_help_box(
+        "Add each asset with name and amount. You can delete entries before moving forward."
+    )
+    _render_assets_item_entry_section()
+
+    st.divider()
+    st.markdown('<div class="section-chip section-pending">2D. Pending Review</div>', unsafe_allow_html=True)
     _render_help_box(
         "Pending Review shows unsaved rule changes and their impact before you commit them."
     )
     _render_pending_preview_and_save(transactions)
+
+
+def _render_assets_item_entry_section() -> None:
+    asset_col1, asset_col2, asset_col3 = st.columns([2.4, 1.2, 1.1])
+    with asset_col1:
+        asset_name = st.text_input("Asset Name", key="asset_name_input", placeholder="e.g., Trailer #7")
+    with asset_col2:
+        asset_amount = st.number_input("Asset Amount", key="asset_amount_input", format="%.2f")
+    with asset_col3:
+        st.write("")
+        st.write("")
+        if st.button("Add Asset Entry", key="btn_add_asset_entry_step2"):
+            name_value = str(asset_name).strip()
+            if not name_value:
+                st.error("Enter an asset name before adding.")
+            else:
+                entries = list(st.session_state.get("manual_asset_entries", []))
+                entries.append({"asset_name": name_value, "amount": float(asset_amount)})
+                st.session_state["manual_asset_entries"] = entries
+                st.session_state["asset_name_input"] = ""
+                st.session_state["asset_amount_input"] = 0.0
+                st.rerun()
+
+    asset_rows = list(st.session_state.get("manual_asset_entries", []))
+    if not asset_rows:
+        st.caption("No asset entries added yet.")
+        return
+
+    asset_frame = pd.DataFrame(asset_rows)
+    asset_frame.insert(0, "select_delete", False)
+    edited_assets = st.data_editor(
+        asset_frame,
+        use_container_width=True,
+        hide_index=True,
+        disabled=["asset_name", "amount"],
+        column_config={
+            "select_delete": st.column_config.CheckboxColumn("Delete"),
+            "amount": st.column_config.NumberColumn("amount", format="$%.2f"),
+        },
+        key="manual_assets_editor",
+    )
+    if st.button("Delete Selected Asset Entries", key="btn_delete_asset_entries_step2"):
+        keep = [
+            row
+            for row in edited_assets.to_dict(orient="records")
+            if not bool(row.get("select_delete", False))
+        ]
+        st.session_state["manual_asset_entries"] = [
+            {"asset_name": str(row.get("asset_name", "")).strip(), "amount": float(row.get("amount", 0.0))}
+            for row in keep
+            if str(row.get("asset_name", "")).strip()
+        ]
+        st.rerun()
 
 
 def _render_individual_rule_manager(transactions) -> None:
@@ -965,7 +1032,16 @@ def _save_split_rule_tables(transactions=None, exact_rules=None, contains_rules=
 def _render_pnl_outputs() -> None:
     st.subheader("Monthly + Period Trucking P&L")
     transactions = st.session_state["bank_transactions"]
-    pnl = build_monthly_yearly_pnl(transactions)
+    st.markdown("**Manual Asset Entries (from Step 2C)**")
+    asset_rows = list(st.session_state.get("manual_asset_entries", []))
+    if asset_rows:
+        _render_table(pd.DataFrame(asset_rows))
+    else:
+        st.caption("No manual assets added.")
+    pnl = build_monthly_yearly_pnl(
+        transactions,
+        asset_entries=st.session_state.get("manual_asset_entries", []),
+    )
     st.session_state["bank_pnl_build"] = pnl
     full_year = _has_full_year_of_data(transactions)
     total_label = "Yearly Detail by Category" if full_year else "Period Total by Category"
@@ -1079,6 +1155,8 @@ def _render_exports() -> None:
             f"- {export_paths['period_total_xlsx']}\n"
             f"- {export_paths['period_summary_csv']}\n"
             f"- {export_paths['period_summary_xlsx']}\n"
+            f"- {export_paths['manual_assets_csv']}\n"
+            f"- {export_paths['manual_assets_xlsx']}\n"
             f"- {checks_path}\n"
             f"- {balance_checks_path}\n"
             f"- {learned_dest}\n"
@@ -1110,6 +1188,8 @@ def _render_exports() -> None:
             export_paths["period_total_xlsx"],
             export_paths["period_summary_csv"],
             export_paths["period_summary_xlsx"],
+            export_paths["manual_assets_csv"],
+            export_paths["manual_assets_xlsx"],
             checks_path,
             balance_checks_path,
             learned_dest,
@@ -1518,11 +1598,18 @@ def _write_local_csv_xlsx_outputs(output_dir: Path, transactions, pnl):
     pnl.yearly_summary.to_csv(period_summary_csv, index=False)
     pnl.yearly_summary.to_excel(period_summary_xlsx, index=False)
 
+    manual_assets = pd.DataFrame(st.session_state.get("manual_asset_entries", []), columns=["asset_name", "amount"])
+    manual_assets_csv = output_dir / "manual_asset_entries.csv"
+    manual_assets_xlsx = output_dir / "manual_asset_entries.xlsx"
+    manual_assets.to_csv(manual_assets_csv, index=False)
+    manual_assets.to_excel(manual_assets_xlsx, index=False)
+
     export_pairs = {
         "bank_transactions_raw": (raw_csv, raw_xlsx),
         "monthly_pnl_detail": (monthly_csv, monthly_xlsx),
         "period_total_by_category": (period_total_csv, period_total_xlsx),
         "period_summary": (period_summary_csv, period_summary_xlsx),
+        "manual_asset_entries": (manual_assets_csv, manual_assets_xlsx),
     }
     export_paths = {
         "raw_csv": raw_csv,
@@ -1533,6 +1620,8 @@ def _write_local_csv_xlsx_outputs(output_dir: Path, transactions, pnl):
         "period_total_xlsx": period_total_xlsx,
         "period_summary_csv": period_summary_csv,
         "period_summary_xlsx": period_summary_xlsx,
+        "manual_assets_csv": manual_assets_csv,
+        "manual_assets_xlsx": manual_assets_xlsx,
     }
     return export_pairs, export_paths
 
@@ -1597,6 +1686,7 @@ def _ensure_workflow_state() -> None:
     st.session_state.setdefault("review_completed", False)
     st.session_state.setdefault("reports_completed", False)
     st.session_state.setdefault("pending_review_assignments", {})
+    st.session_state.setdefault("manual_asset_entries", [])
 
 
 def _render_workflow_sidebar() -> None:

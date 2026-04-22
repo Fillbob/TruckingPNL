@@ -7,7 +7,7 @@ import pandas as pd
 from financial_validator_mvp.models.schemas import BankStatementBalanceSummary
 from financial_validator_mvp.services.pnl_builder import PnlBuildResult
 
-SECTION_ORDER = ["Income", "COGS", "Expenses", "Other Income", "Other Expense", "Unclassified"]
+SECTION_ORDER = ["Income", "Assets", "COGS", "Expenses", "Other Income", "Other Expense", "Unclassified"]
 
 
 def generate_profit_and_loss_pdf(
@@ -66,6 +66,7 @@ def generate_profit_and_loss_pdf(
     summary_map = _summary_map(pnl.yearly_summary)
     summary_lines = [
         "Total Income",
+        "Total Assets",
         "Total COGS",
         "Gross Profit",
         "Total Expenses",

@@ -3,19 +3,22 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 
 from financial_validator_mvp.models.schemas import Transaction
 
-PnlSection = Literal["Income", "COGS", "Expenses", "Other Income", "Other Expense", "Unclassified"]
+PnlSection = Literal["Income", "Assets", "COGS", "Expenses", "Other Income", "Other Expense", "Unclassified"]
 
 TRUCKING_PNL_SECTIONS: dict[PnlSection, list[str]] = {
     "Income": [
         "Gross Trucking Income",
         "Fuel Surcharge",
         "Other Income",
+    ],
+    "Assets": [
+        "Assets",
     ],
     "COGS": [
         "Fuel for Hired Vehicles",
@@ -97,7 +100,10 @@ def pnl_amount_for_category(amount: float, category: str | None) -> float:
     return _pnl_amount_for_section(amount, section)
 
 
-def build_monthly_yearly_pnl(transactions: list[Transaction]) -> PnlBuildResult:
+def build_monthly_yearly_pnl(
+    transactions: list[Transaction],
+    asset_entries: list[dict[str, Any]] | None = None,
+) -> PnlBuildResult:
     monthly_rollup: dict[tuple[str, str, str], float] = defaultdict(float)
     yearly_rollup: dict[tuple[str, str], float] = defaultdict(float)
 
@@ -112,6 +118,14 @@ def build_monthly_yearly_pnl(transactions: list[Transaction]) -> PnlBuildResult:
 
         monthly_rollup[(month_key, section, category)] += amount
         yearly_rollup[(section, category)] += amount
+
+    for entry in asset_entries or []:
+        asset_name = str(entry.get("asset_name", "")).strip()
+        amount = _coerce_asset_amount(entry.get("amount"))
+        if not asset_name or amount is None:
+            continue
+        monthly_rollup[("MANUAL", "Assets", asset_name)] += amount
+        yearly_rollup[("Assets", asset_name)] += amount
 
     monthly_rows = [
         {"month": month, "section": section, "category": category, "amount": round(amount, 2)}
@@ -171,6 +185,7 @@ def _build_yearly_summary(yearly_detail: pd.DataFrame) -> pd.DataFrame:
     by_section = {row["section"]: float(row["amount"]) for _, row in section_totals.iterrows()}
 
     total_income = by_section.get("Income", 0.0)
+    total_assets = by_section.get("Assets", 0.0)
     total_cogs = by_section.get("COGS", 0.0)
     # Section totals are signed, so profitability lines should add signed sections.
     gross_profit = total_income + total_cogs
@@ -183,6 +198,7 @@ def _build_yearly_summary(yearly_detail: pd.DataFrame) -> pd.DataFrame:
 
     rows = [
         {"line_item": "Total Income", "amount": round(total_income, 2)},
+        {"line_item": "Total Assets", "amount": round(total_assets, 2)},
         {"line_item": "Total COGS", "amount": round(total_cogs, 2)},
         {"line_item": "Gross Profit", "amount": round(gross_profit, 2)},
         {"line_item": "Total Expenses", "amount": round(total_expenses, 2)},
@@ -193,3 +209,12 @@ def _build_yearly_summary(yearly_detail: pd.DataFrame) -> pd.DataFrame:
         {"line_item": "Unclassified (needs review)", "amount": round(unclassified, 2)},
     ]
     return pd.DataFrame(rows)
+
+
+def _coerce_asset_amount(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None

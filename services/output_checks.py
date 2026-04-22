@@ -157,6 +157,17 @@ def _build_pnl_arithmetic_checks(
     summary_map = _summary_map(pnl.yearly_summary)
     checks.append(
         _money_check(
+            "summary_assets_consistency",
+            expected=float(
+                pnl.yearly_detail.loc[pnl.yearly_detail["section"] == "Assets", "amount"].sum()
+            ) if not pnl.yearly_detail.empty else 0.0,
+            actual=summary_map["Total Assets"],
+            details="Summary assets line must equal yearly detail assets section total.",
+            tolerance=tolerance,
+        )
+    )
+    checks.append(
+        _money_check(
             "summary_gross_profit_formula",
             expected=summary_map["Total Income"] + summary_map["Total COGS"],
             actual=summary_map["Gross Profit"],
@@ -473,6 +484,7 @@ def _summary_map(summary_frame: pd.DataFrame) -> dict[str, float]:
     data = {str(row["line_item"]): float(row["amount"]) for _, row in summary_frame.iterrows()} if not summary_frame.empty else {}
     keys = [
         "Total Income",
+        "Total Assets",
         "Total COGS",
         "Gross Profit",
         "Total Expenses",

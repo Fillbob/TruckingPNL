@@ -39,7 +39,7 @@ from financial_validator_mvp.services.persistence import (
     save_rule_dicts,
     upsert_learned_rules,
 )
-from financial_validator_mvp.services.pnl_builder import build_monthly_yearly_pnl
+from financial_validator_mvp.services.pnl_builder import build_monthly_yearly_pnl, infer_section_for_category
 from financial_validator_mvp.services.review_state import (
     apply_review_assignments,
     build_review_rows,
@@ -102,6 +102,9 @@ SESSION_RESET_KEYS = [
     "asset_amount_input",
     "manual_assets_editor",
     "reset_asset_inputs_next_run",
+    "asset_table_rows",
+    "asset_table_editor",
+    "asset_table_classified_signature",
 ]
 
 
@@ -776,59 +779,65 @@ def _render_review_assistant() -> None:
 
 
 def _render_assets_item_entry_section() -> None:
-    if st.session_state.pop("reset_asset_inputs_next_run", False):
-        st.session_state["asset_name_input"] = ""
-        st.session_state["asset_amount_input"] = 0.0
+    transactions = st.session_state.get("bank_transactions", [])
+    classified_asset_rows = _build_classified_asset_rows(transactions)
+    classified_signature = _asset_rows_signature(classified_asset_rows)
+    previous_signature = st.session_state.get("asset_table_classified_signature")
 
-    asset_col1, asset_col2, asset_col3 = st.columns([2.4, 1.2, 1.1])
-    with asset_col1:
-        asset_name = st.text_input("Asset Name", key="asset_name_input", placeholder="e.g., Trailer #7")
-    with asset_col2:
-        asset_amount = st.number_input("Asset Amount", key="asset_amount_input", format="%.2f")
-    with asset_col3:
-        st.write("")
-        st.write("")
-        if st.button("Add Asset Entry", key="btn_add_asset_entry_step2"):
-            name_value = str(asset_name).strip()
-            if not name_value:
-                st.error("Enter an asset name before adding.")
-            else:
-                entries = list(st.session_state.get("manual_asset_entries", []))
-                entries.append({"asset_name": name_value, "amount": float(asset_amount)})
-                st.session_state["manual_asset_entries"] = entries
-                st.session_state["reset_asset_inputs_next_run"] = True
-                st.rerun()
+    saved_rows = _sanitize_asset_rows(st.session_state.get("manual_asset_entries", []))
+    if "asset_table_rows" not in st.session_state:
+        st.session_state["asset_table_rows"] = _merge_asset_rows(classified_asset_rows, saved_rows)
+        st.session_state["asset_table_classified_signature"] = classified_signature
+    elif previous_signature != classified_signature:
+        current_rows = _sanitize_asset_rows(st.session_state.get("asset_table_rows", []))
+        st.session_state["asset_table_rows"] = _merge_asset_rows(classified_asset_rows, current_rows)
+        st.session_state["asset_table_classified_signature"] = classified_signature
 
-    asset_rows = list(st.session_state.get("manual_asset_entries", []))
-    if not asset_rows:
-        st.caption("No asset entries added yet.")
-        return
-
-    asset_frame = pd.DataFrame(asset_rows)
+    st.caption("Classified assets are auto-loaded here. Edit table values, then click Save to overwrite P&L asset lines.")
+    asset_frame = pd.DataFrame(st.session_state.get("asset_table_rows", []), columns=["asset_name", "amount"])
+    if asset_frame.empty:
+        asset_frame = pd.DataFrame(columns=["asset_name", "amount"])
     asset_frame.insert(0, "select_delete", False)
     edited_assets = st.data_editor(
         asset_frame,
         use_container_width=True,
         hide_index=True,
-        disabled=["asset_name", "amount"],
+        num_rows="dynamic",
         column_config={
             "select_delete": st.column_config.CheckboxColumn("Delete"),
+            "asset_name": st.column_config.TextColumn("asset_name"),
             "amount": st.column_config.NumberColumn("amount", format="$%.2f"),
         },
-        key="manual_assets_editor",
+        key="asset_table_editor",
     )
-    if st.button("Delete Selected Asset Entries", key="btn_delete_asset_entries_step2"):
-        keep = [
-            row
-            for row in edited_assets.to_dict(orient="records")
-            if not bool(row.get("select_delete", False))
-        ]
-        st.session_state["manual_asset_entries"] = [
-            {"asset_name": str(row.get("asset_name", "")).strip(), "amount": float(row.get("amount", 0.0))}
-            for row in keep
-            if str(row.get("asset_name", "")).strip()
-        ]
-        st.rerun()
+    st.session_state["asset_table_rows"] = [
+        {"asset_name": str(row.get("asset_name", "")).strip(), "amount": _coerce_numeric(row.get("amount")) or 0.0}
+        for row in edited_assets.to_dict(orient="records")
+        if str(row.get("asset_name", "")).strip()
+    ]
+
+    action_col1, action_col2, action_col3 = st.columns([1.2, 1.2, 2.2])
+    with action_col1:
+        if st.button("Delete Selected Asset Rows", key="btn_delete_asset_entries_step2"):
+            keep = [
+                row
+                for row in edited_assets.to_dict(orient="records")
+                if not bool(row.get("select_delete", False))
+            ]
+            st.session_state["asset_table_rows"] = _sanitize_asset_rows(keep)
+            st.rerun()
+    with action_col2:
+        if st.button("Reload Classified Assets", key="btn_reload_classified_assets_step2"):
+            st.session_state["asset_table_rows"] = _merge_asset_rows(classified_asset_rows, [])
+            st.session_state["asset_table_classified_signature"] = classified_signature
+            st.rerun()
+    with action_col3:
+        if st.button("Save Asset Table (Overwrite P&L Assets)", key="btn_save_asset_table_step2"):
+            cleaned = _sanitize_asset_rows(edited_assets.to_dict(orient="records"))
+            st.session_state["manual_asset_entries"] = cleaned
+            st.session_state["asset_table_rows"] = cleaned
+            st.success(f"Saved {len(cleaned)} asset row(s). These values now drive P&L asset totals.")
+            st.rerun()
 
 
 def _render_individual_rule_manager(transactions) -> None:
@@ -1036,15 +1045,16 @@ def _save_split_rule_tables(transactions=None, exact_rules=None, contains_rules=
 def _render_pnl_outputs() -> None:
     st.subheader("Monthly + Period Trucking P&L")
     transactions = st.session_state["bank_transactions"]
-    st.markdown("**Manual Asset Entries (from Step 2C)**")
-    asset_rows = list(st.session_state.get("manual_asset_entries", []))
+    st.markdown("**Saved Asset Entries (from Step 2C table)**")
+    asset_rows = _sanitize_asset_rows(st.session_state.get("manual_asset_entries", []))
     if asset_rows:
         _render_table(pd.DataFrame(asset_rows))
     else:
-        st.caption("No manual assets added.")
+        st.caption("No saved asset table rows yet. P&L will use transaction-classified assets until you save.")
     pnl = build_monthly_yearly_pnl(
         transactions,
-        asset_entries=st.session_state.get("manual_asset_entries", []),
+        asset_entries=asset_rows,
+        replace_transaction_assets=bool(asset_rows),
     )
     st.session_state["bank_pnl_build"] = pnl
     full_year = _has_full_year_of_data(transactions)
@@ -1691,6 +1701,8 @@ def _ensure_workflow_state() -> None:
     st.session_state.setdefault("reports_completed", False)
     st.session_state.setdefault("pending_review_assignments", {})
     st.session_state.setdefault("manual_asset_entries", [])
+    st.session_state.setdefault("asset_table_rows", [])
+    st.session_state.setdefault("asset_table_classified_signature", "")
 
 
 def _render_workflow_sidebar() -> None:
@@ -1759,6 +1771,47 @@ def _merge_exclude_text(manual_exclude_text: str, queue_excluded_values: list[st
         if value.strip():
             exclude_items.add(value.strip().lower())
     return "||".join(sorted(exclude_items))
+
+
+def _build_classified_asset_rows(transactions) -> list[dict[str, float | str]]:
+    rollup: dict[str, float] = {}
+    for txn in transactions:
+        category = txn.resolved_category or ""
+        if infer_section_for_category(category) != "Assets":
+            continue
+        key = str(txn.normalized_description or txn.raw_description or category).strip()
+        if not key:
+            continue
+        rollup[key] = rollup.get(key, 0.0) + float(txn.amount)
+    return [
+        {"asset_name": name, "amount": round(amount, 2)}
+        for name, amount in sorted(rollup.items(), key=lambda item: item[0].lower())
+    ]
+
+
+def _sanitize_asset_rows(rows) -> list[dict[str, float | str]]:
+    cleaned = []
+    for row in rows or []:
+        name = str(row.get("asset_name", "")).strip()
+        if not name:
+            continue
+        amount = _coerce_numeric(row.get("amount"))
+        cleaned.append({"asset_name": name, "amount": float(amount or 0.0)})
+    return cleaned
+
+
+def _merge_asset_rows(classified_rows, override_rows) -> list[dict[str, float | str]]:
+    merged: dict[str, float] = {}
+    for row in _sanitize_asset_rows(classified_rows):
+        merged[str(row["asset_name"])] = float(row["amount"])
+    for row in _sanitize_asset_rows(override_rows):
+        merged[str(row["asset_name"])] = float(row["amount"])
+    return [{"asset_name": name, "amount": amount} for name, amount in sorted(merged.items(), key=lambda item: item[0].lower())]
+
+
+def _asset_rows_signature(rows) -> str:
+    payload = json.dumps(_sanitize_asset_rows(rows), sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _count_unresolved_transactions(transactions, *, actionable_only: bool = False) -> int:

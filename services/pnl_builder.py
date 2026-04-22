@@ -103,6 +103,7 @@ def pnl_amount_for_category(amount: float, category: str | None) -> float:
 def build_monthly_yearly_pnl(
     transactions: list[Transaction],
     asset_entries: list[dict[str, Any]] | None = None,
+    replace_transaction_assets: bool = False,
 ) -> PnlBuildResult:
     monthly_rollup: dict[tuple[str, str, str], float] = defaultdict(float)
     yearly_rollup: dict[tuple[str, str], float] = defaultdict(float)
@@ -114,6 +115,8 @@ def build_monthly_yearly_pnl(
         month_key = _month_key(txn_date)
         category = txn.resolved_category or "UNCLASSIFIED"
         section = infer_section_for_category(category)
+        if replace_transaction_assets and section == "Assets":
+            continue
         amount = pnl_amount_for_category(txn.amount, category)
 
         monthly_rollup[(month_key, section, category)] += amount

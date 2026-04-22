@@ -175,6 +175,9 @@ def _month_key(txn_date: date | None) -> str:
 
 def _pnl_amount_for_section(amount: float, section: PnlSection) -> float:
     # Preserve signed activity for all categories so each category nets debits and credits.
+    if section == "Assets":
+        # Asset purchases typically come in as negative bank amounts; show them as positive asset values on the P&L.
+        return abs(amount)
     if section in {"Income", "COGS", "Expenses", "Other Income", "Other Expense", "Unclassified"}:
         return amount
     return amount

@@ -101,6 +101,7 @@ SESSION_RESET_KEYS = [
     "asset_name_input",
     "asset_amount_input",
     "manual_assets_editor",
+    "reset_asset_inputs_next_run",
 ]
 
 
@@ -775,6 +776,10 @@ def _render_review_assistant() -> None:
 
 
 def _render_assets_item_entry_section() -> None:
+    if st.session_state.pop("reset_asset_inputs_next_run", False):
+        st.session_state["asset_name_input"] = ""
+        st.session_state["asset_amount_input"] = 0.0
+
     asset_col1, asset_col2, asset_col3 = st.columns([2.4, 1.2, 1.1])
     with asset_col1:
         asset_name = st.text_input("Asset Name", key="asset_name_input", placeholder="e.g., Trailer #7")
@@ -791,8 +796,7 @@ def _render_assets_item_entry_section() -> None:
                 entries = list(st.session_state.get("manual_asset_entries", []))
                 entries.append({"asset_name": name_value, "amount": float(asset_amount)})
                 st.session_state["manual_asset_entries"] = entries
-                st.session_state["asset_name_input"] = ""
-                st.session_state["asset_amount_input"] = 0.0
+                st.session_state["reset_asset_inputs_next_run"] = True
                 st.rerun()
 
     asset_rows = list(st.session_state.get("manual_asset_entries", []))

@@ -810,11 +810,6 @@ def _render_assets_item_entry_section() -> None:
         },
         key="asset_table_editor",
     )
-    st.session_state["asset_table_rows"] = [
-        {"asset_name": str(row.get("asset_name", "")).strip(), "amount": _coerce_numeric(row.get("amount")) or 0.0}
-        for row in edited_assets.to_dict(orient="records")
-        if str(row.get("asset_name", "")).strip()
-    ]
 
     action_col1, action_col2, action_col3 = st.columns([1.2, 1.2, 2.2])
     with action_col1:

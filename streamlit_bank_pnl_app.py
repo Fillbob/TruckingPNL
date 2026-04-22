@@ -1242,7 +1242,7 @@ def _render_exports() -> None:
             f"- {balance_pdf}"
         )
         prior_files = st.session_state.get("latest_export_files", [])
-        st.session_state["latest_export_files"] = [*prior_files, pnl_pdf, balance_pdf]
+        st.session_state["latest_export_files"] = _dedupe_paths([*prior_files, pnl_pdf, balance_pdf])
 
     _render_export_downloads()
 
@@ -1252,7 +1252,7 @@ def _render_export_downloads() -> None:
     if not latest_files:
         return
 
-    file_paths = [Path(path) for path in latest_files]
+    file_paths = _dedupe_paths(latest_files)
     existing_files = [path for path in file_paths if path.exists() and path.is_file()]
     if not existing_files:
         return
@@ -1267,23 +1267,38 @@ def _render_export_downloads() -> None:
         key="btn_download_exports_zip",
     )
 
-    for path in existing_files:
+    for idx, path in enumerate(existing_files):
+        key_suffix = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
         st.download_button(
             f"Download {path.name}",
             data=path.read_bytes(),
             file_name=path.name,
             mime="application/octet-stream",
-            key=f"btn_download_{path.name}",
+            key=f"btn_download_{idx}_{key_suffix}",
         )
 
 
 def _build_zip_bytes(file_paths: list[Path]) -> bytes:
     buffer = io.BytesIO()
+    unique_paths = _dedupe_paths(file_paths)
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in file_paths:
+        for path in unique_paths:
             archive.writestr(path.name, path.read_bytes())
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def _dedupe_paths(paths) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for item in paths:
+        path = Path(item)
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
 
 
 def _write_split_rule_csv_exports(output_dir: Path) -> tuple[Path, Path, Path]:
